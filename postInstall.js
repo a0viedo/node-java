@@ -1,5 +1,6 @@
-var glob = require('glob');
 var fs = require('fs');
+var os = require('os');
+var glob = require('glob');
 var path = require('path');
 
 // Ignore jvm.dll when running on windows
