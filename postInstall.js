@@ -2,6 +2,9 @@ var glob = require('glob');
 var fs = require('fs');
 var path = require('path');
 
+// Ignore jvm.dll when running on windows
+if (os.platform()==='win32') return;
+
 require('find-java-home')(function(err, home){
   var dll;
   var dylib;
