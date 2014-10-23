@@ -1,6 +1,5 @@
 /build/*
 node_modules
-*.node
 *.swp
 .lock*
 npm-debug.log
