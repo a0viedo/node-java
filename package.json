@@ -26,7 +26,7 @@
     "url": "https://github.com/joeferner/node-java.git"
   },
   "dependencies": {
-    "find-java-home": "0.1.1",
+    "find-java-home": "https://github.com/kidozen/node-find-java-home/tarball/master",
     "glob": "~3.2.9",
     "nan": "1.2.0"
   },

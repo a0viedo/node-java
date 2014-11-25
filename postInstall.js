@@ -3,7 +3,7 @@ var fs = require('fs');
 var path = require('path');
 var os = require('os');
 
-require('find-java-home')(function(err, home){
+require('find-java-home')({ allowJre: true  }, function(err, home){
   var dll;
   var dylib;
   var so,soFiles;
