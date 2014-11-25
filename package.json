@@ -7,7 +7,7 @@
     "jvm",
     "bridge"
   ],
-  "version": "0.4.2",
+  "version": "0.4.3",
   "engines": {
     "node": ">=0.8.0"
   },
@@ -26,7 +26,7 @@
     "url": "https://github.com/joeferner/node-java.git"
   },
   "dependencies": {
-    "find-java-home": "0.1.1",
+    "find-java-home": "https://github.com/kidozen/node-find-java-home/tarball/master",
     "glob": "~3.2.9",
     "nan": "1.2.0"
   },
@@ -35,7 +35,7 @@
     "nodeunit": "0.9.0"
   },
   "scripts": {
-    "test": "nodeunit test",
+    "test": "nodeunit test test8",
     "install": "node install.js || node-gyp rebuild",
     "postinstall": "node postInstall.js"
   },

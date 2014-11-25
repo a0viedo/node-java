@@ -1,4 +1,4 @@
-require('find-java-home') (function (err, home) {
+require('find-java-home')({ allowJre: true }, function (err, home){
   if(err){
     console.error("[node-java] "+err);
     process.exit(1);

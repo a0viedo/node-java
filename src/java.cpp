@@ -1,4 +1,3 @@
-
 #include "java.h"
 #include <string.h>
 #ifdef WIN32
@@ -12,6 +11,8 @@
 #include <node_version.h>
 #include <sstream>
 #include <nan.h>
+
+#define DYNAMIC_PROXY_JS_ERROR -4
 
 long v8ThreadId;
 
@@ -65,6 +66,8 @@ long my_getThreadId() {
   NODE_SET_PROTOTYPE_METHOD(t, "instanceOf", instanceOf);
 
   target->Set(NanNew<v8::String>("Java"), t->GetFunction());
+
+  JavaProxyObject::init();
 }
 
 NAN_METHOD(Java::New) {
@@ -158,7 +161,7 @@ v8::Local<v8::Value> Java::createJVM(JavaVM** jvm, JNIEnv** env) {
   }
 
   JNI_GetDefaultJavaVMInitArgs(&args);
-  args.version = JNI_VERSION_1_6;
+  args.version = JNI_BEST_VERSION;
   args.ignoreUnrecognized = false;
   args.options = vmOptions;
   args.nOptions = vmOptionsCount;
@@ -351,14 +354,66 @@ NAN_METHOD(Java::newProxy) {
     return NanThrowError(javaExceptionToV8(self, env, errStr.str()));
   }
 
+  // create the NodeDynamicProxyClass
+  jclass constructorClazz = env->FindClass("java/lang/reflect/Constructor");
+  jmethodID constructor_newInstance = env->GetMethodID(constructorClazz, "newInstance", "([Ljava/lang/Object;)Ljava/lang/Object;");
+
+  //printf("invoke: %s\n", javaMethodCallToString(env, m_method, constructor_newInstance, m_args).c_str());
+
   // run constructor
-  v8::Handle<v8::Value> callback = NanNull();
-  NewInstanceBaton* baton = new NewInstanceBaton(self, clazz, method, methodArgs, callback);
-  v8::Handle<v8::Value> result = baton->runSync();
-  delete baton;
-  if(result->IsNativeError()) {
-    return NanThrowError(result);
+  jobject dynamicProxy = env->CallObjectMethod(method, constructor_newInstance, methodArgs);
+  if(env->ExceptionCheck()) {
+    std::ostringstream errStr;
+    errStr << "Error creating class";
+    return NanThrowError(javaExceptionToV8(self, env, errStr.str()));
   }
+
+  jclass dynamicInterface = javaFindClass(env, interfaceName);
+  if(dynamicInterface == NULL) {
+    std::ostringstream errStr;
+    errStr << "Could not find interface ";
+    errStr << interfaceName;
+    return NanThrowError(javaExceptionToV8(self, env, errStr.str()));
+  }
+  jclass classClazz = env->FindClass("java/lang/Class");
+  jobjectArray classArray = env->NewObjectArray(1, classClazz, NULL);
+  if(classArray == NULL) {
+    std::ostringstream errStr;
+    errStr << "Could not create class array for Proxy";
+    return NanThrowError(javaExceptionToV8(self, env, errStr.str()));
+  }
+  env->SetObjectArrayElement(classArray, 0, dynamicInterface);
+
+  jmethodID class_getClassLoader = env->GetMethodID(classClazz, "getClassLoader", "()Ljava/lang/ClassLoader;");
+  jobject classLoader = env->CallObjectMethod(dynamicInterface, class_getClassLoader);
+  assert(!env->ExceptionCheck());
+
+  if(classLoader == NULL) {
+    jclass objectClazz = env->FindClass("java/lang/Object");
+    jmethodID object_getClass = env->GetMethodID(objectClazz, "getClass", "()Ljava/lang/Class;");
+    jobject jobjClass = env->CallObjectMethod(dynamicProxy, object_getClass);
+    checkJavaException(env);
+    classLoader = env->CallObjectMethod(jobjClass, class_getClassLoader);
+    checkJavaException(env);
+  }
+  if(classLoader == NULL) {
+    std::ostringstream errStr;
+    errStr << "Could not get classloader for Proxy";
+    return NanThrowError(javaExceptionToV8(self, env, errStr.str()));
+  }
+
+  // create proxy instance
+  jclass proxyClass = env->FindClass("java/lang/reflect/Proxy");
+  jmethodID proxy_newProxyInstance = env->GetStaticMethodID(proxyClass, "newProxyInstance", "(Ljava/lang/ClassLoader;[Ljava/lang/Class;Ljava/lang/reflect/InvocationHandler;)Ljava/lang/Object;");
+  jobject proxyInstance = env->CallStaticObjectMethod(proxyClass, proxy_newProxyInstance, classLoader, classArray, dynamicProxy);
+  if(env->ExceptionCheck()) {
+    std::ostringstream errStr;
+    errStr << "Error creating java.lang.reflect.Proxy";
+    return NanThrowError(javaExceptionToV8(self, env, errStr.str()));
+  }
+
+  v8::Handle<v8::Value> result = javaToV8(self, env, proxyInstance, dynamicProxyData);
+
   NanAssignPersistent(dynamicProxyData->jsObject, result);
   NanReturnValue(result);
 }
@@ -616,6 +671,34 @@ NAN_METHOD(Java::newArray) {
       shortValues[0] = env->CallShortMethod(val, short_shortValue);
       assert(!env->ExceptionCheck());
       env->SetShortArrayRegion((jshortArray)results, i, 1, shortValues);
+    }
+  }
+
+  else if(strcmp(className.c_str(), "double") == 0) {
+    results = env->NewDoubleArray(arrayObj->Length());
+    for(uint32_t i=0; i<arrayObj->Length(); i++) {
+      v8::Local<v8::Value> item = arrayObj->Get(i);
+      jobject val = v8ToJava(env, item);
+      jclass doubleClazz = env->FindClass("java/lang/Double");
+      jmethodID double_doubleValue = env->GetMethodID(doubleClazz, "doubleValue", "()D");
+      jdouble doubleValues[1];
+      doubleValues[0] = env->CallDoubleMethod(val, double_doubleValue);
+      assert(!env->ExceptionCheck());
+      env->SetDoubleArrayRegion((jdoubleArray)results, i, 1, doubleValues);
+    }
+  }
+
+  else if(strcmp(className.c_str(), "int") == 0) {
+    results = env->NewIntArray(arrayObj->Length());
+    for(uint32_t i=0; i<arrayObj->Length(); i++) {
+      v8::Local<v8::Value> item = arrayObj->Get(i);
+      jobject val = v8ToJava(env, item);
+      jclass integerClazz = env->FindClass("java/lang/Integer");
+      jmethodID integer_intValue = env->GetMethodID(integerClazz, "intValue", "()I");
+      jint intValues[1];
+      intValues[0] = env->CallIntMethod(val, integer_intValue);
+      assert(!env->ExceptionCheck());
+      env->SetIntArrayRegion((jintArray)results, i, 1, intValues);
     }
   }
 
@@ -967,6 +1050,12 @@ NAN_METHOD(Java::instanceOf) {
 void EIO_CallJs(uv_work_t* req) {
 }
 
+static std::string int_to_string(int i) {
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%d", i);
+  return std::string(buf);
+}
+
 #if NODE_MINOR_VERSION >= 10
 void EIO_AfterCallJs(uv_work_t* req, int status) {
 #else
@@ -978,7 +1067,14 @@ void EIO_AfterCallJs(uv_work_t* req) {
   }
   dynamicProxyData->result = NULL;
 
-  JNIEnv* env = dynamicProxyData->env;
+  JNIEnv* env;
+  int ret = dynamicProxyData->java->getJvm()->GetEnv((void**)&env, JNI_BEST_VERSION);
+  if (ret != JNI_OK) {
+    dynamicProxyData->throwableClass = "java/lang/IllegalStateException";
+    dynamicProxyData->throwableMessage = "Could not retrieve JNIEnv: jvm->GetEnv returned " + int_to_string(ret);
+    dynamicProxyData->done = DYNAMIC_PROXY_JS_ERROR;
+    return;
+  }
 
   NanScope();
   v8::Array* v8Args;
@@ -992,12 +1088,16 @@ void EIO_AfterCallJs(uv_work_t* req) {
   v8::Local<v8::Object> dynamicProxyDataFunctions = NanNew(dynamicProxyData->functions);
   v8::Local<v8::Value> fnObj = dynamicProxyDataFunctions->Get(NanNew<v8::String>(dynamicProxyData->methodName.c_str()));
   if(fnObj->IsUndefined() || fnObj->IsNull()) {
-    printf("ERROR: Could not find method %s\n", dynamicProxyData->methodName.c_str());
-    goto CleanUp;
+    dynamicProxyData->throwableClass = "java/lang/NoSuchMethodError";
+    dynamicProxyData->throwableMessage = "Could not find js function " + dynamicProxyData->methodName;
+    dynamicProxyData->done = DYNAMIC_PROXY_JS_ERROR;
+    return;
   }
   if(!fnObj->IsFunction()) {
-    printf("ERROR: %s is not a function.\n", dynamicProxyData->methodName.c_str());
-    goto CleanUp;
+    dynamicProxyData->throwableClass = "java/lang/IllegalStateException";
+    dynamicProxyData->throwableMessage = dynamicProxyData->methodName + " is not a function";
+    dynamicProxyData->done = DYNAMIC_PROXY_JS_ERROR;
+    return;
   }
 
   fn = v8::Function::Cast(*fnObj);
@@ -1012,8 +1112,24 @@ void EIO_AfterCallJs(uv_work_t* req) {
   for(i=0; i<argc; i++) {
     argv[i] = v8Args->Get(i);
   }
+
+  v8::TryCatch tryCatch;
   v8Result = fn->Call(dynamicProxyDataFunctions, argc, argv);
   delete[] argv;
+  if (tryCatch.HasCaught()) {
+    dynamicProxyData->throwableClass = "node/NodeJsException";
+    v8::String::Utf8Value stackTrace(tryCatch.StackTrace());
+    if (stackTrace.length() > 0) {
+      dynamicProxyData->throwableMessage = std::string(*stackTrace);
+    } else {
+      v8::String::Utf8Value exception(tryCatch.Exception());
+      dynamicProxyData->throwableMessage = std::string(*exception);
+    }
+    tryCatch.Reset();
+    dynamicProxyData->done = DYNAMIC_PROXY_JS_ERROR;
+    return;
+  }
+
   if(!dynamicProxyDataVerify(dynamicProxyData)) {
     return;
   }
@@ -1021,25 +1137,33 @@ void EIO_AfterCallJs(uv_work_t* req) {
   javaResult = v8ToJava(env, v8Result);
   if(javaResult == NULL) {
     dynamicProxyData->result = NULL;
-    dynamicProxyData->resultGlobalRef = NULL;
   } else {
-    dynamicProxyData->result = javaResult;
-    dynamicProxyData->resultGlobalRef = env->NewGlobalRef(javaResult);
+    dynamicProxyData->result = env->NewGlobalRef(javaResult);
   }
 
-CleanUp:
   dynamicProxyData->done = true;
+}
+
+void throwNewThrowable(JNIEnv* env, const char * excClassName, std::string msg) {
+  jclass newExcCls = env->FindClass(excClassName);
+  jthrowable throwable = env->ExceptionOccurred();
+  if (throwable != NULL) {
+    env->Throw(throwable); // this should only be Errors, according to the docs
+  }
+  env->ThrowNew(newExcCls, msg.c_str());
 }
 
 JNIEXPORT jobject JNICALL Java_node_NodeDynamicProxyClass_callJs(JNIEnv *env, jobject src, jlong ptr, jobject method, jobjectArray args) {
   long myThreadId = my_getThreadId();
+  bool hasArgsGlobalRef = false;
 
+  // args needs to be global, you can't send env across thread boundaries
   DynamicProxyData* dynamicProxyData = (DynamicProxyData*)ptr;
-  dynamicProxyData->env = env;
   dynamicProxyData->args = args;
   dynamicProxyData->done = false;
   dynamicProxyData->result = NULL;
-  dynamicProxyData->resultGlobalRef = NULL;
+  dynamicProxyData->throwableClass = "";
+  dynamicProxyData->throwableMessage = "";
 
   jclass methodClazz = env->FindClass("java/lang/reflect/Method");
   jmethodID method_getName = env->GetMethodID(methodClazz, "getName", "()Ljava/lang/String;");
@@ -1055,6 +1179,12 @@ JNIEXPORT jobject JNICALL Java_node_NodeDynamicProxyClass_callJs(JNIEnv *env, jo
     EIO_AfterCallJs(req);
 #endif
   } else {
+    if (args) {
+      // if args is not null and we have to kick this across the thread boundary, make it a global ref
+      dynamicProxyData->args = (jobjectArray) env->NewGlobalRef(args);
+      hasArgsGlobalRef = true;
+    }
+
     uv_queue_work(uv_default_loop(), req, EIO_CallJs, (uv_after_work_cb)EIO_AfterCallJs);
 
     while(!dynamicProxyData->done) {
@@ -1063,18 +1193,26 @@ JNIEXPORT jobject JNICALL Java_node_NodeDynamicProxyClass_callJs(JNIEnv *env, jo
   }
 
   if(!dynamicProxyDataVerify(dynamicProxyData)) {
-    return NULL;
+    throwNewThrowable(env, "java/lang/IllegalStateException", "dynamicProxyData was corrupted");
   }
+  if(hasArgsGlobalRef) {
+    env->DeleteGlobalRef(dynamicProxyData->args);
+  }
+
+  if (dynamicProxyData->done == DYNAMIC_PROXY_JS_ERROR) {
+    throwNewThrowable(env, dynamicProxyData->throwableClass.c_str(), dynamicProxyData->throwableMessage);
+  }
+
+  jobject result = NULL;
   if(dynamicProxyData->result) {
-    env->DeleteGlobalRef(dynamicProxyData->resultGlobalRef);
+    // need to retain a local ref so that we can return it, otherwise the returned object gets corrupted
+    result = env->NewLocalRef(dynamicProxyData->result);
+    env->DeleteGlobalRef(dynamicProxyData->result);
   }
-  return dynamicProxyData->result;
+  return result;
 }
 
 JNIEXPORT void JNICALL Java_node_NodeDynamicProxyClass_unref(JNIEnv *env, jobject src, jlong ptr) {
   DynamicProxyData* dynamicProxyData = (DynamicProxyData*)ptr;
-  if(!dynamicProxyDataVerify(dynamicProxyData)) {
-    return;
-  }
-  NanDisposePersistent(dynamicProxyData->jsObject);
+  unref(dynamicProxyData);
 }

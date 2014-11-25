@@ -1,4 +1,3 @@
-
 #include "utils.h"
 #include <string.h>
 #include <algorithm>
@@ -128,11 +127,11 @@ std::string javaMethodCallToString(JNIEnv *env, jobject obj, jmethodID methodId,
 
 JNIEnv* javaGetEnv(JavaVM* jvm, jobject classLoader) {
   JNIEnv *env = NULL;
-  int ret = jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+  int ret = jvm->GetEnv((void**)&env, JNI_BEST_VERSION);
 
   if (ret == JNI_EDETACHED) {
     JavaVMAttachArgs attachArgs;
-    attachArgs.version = JNI_VERSION_1_6;
+    attachArgs.version = JNI_BEST_VERSION;
     attachArgs.name = NULL;
     attachArgs.group = NULL;
     jvm->AttachCurrentThread((void**)&env, &attachArgs);
@@ -310,57 +309,7 @@ jobject v8ToJava(JNIEnv* env, v8::Local<v8::Value> arg) {
 
 jobject v8ToJava_javaObject(JNIEnv* env, v8::Local<v8::Object> obj) {
   JavaObject* javaObject = node::ObjectWrap::Unwrap<JavaObject>(obj);
-  jobject jobj = javaObject->getObject();
-
-  jclass nodeDynamicProxyClass = env->FindClass("node/NodeDynamicProxyClass");
-  if(env->IsInstanceOf(jobj, nodeDynamicProxyClass)) {
-    jfieldID ptrField = env->GetFieldID(nodeDynamicProxyClass, "ptr", "J");
-    DynamicProxyData* proxyData = (DynamicProxyData*)(long)env->GetLongField(jobj, ptrField);
-    if(!dynamicProxyDataVerify(proxyData)) {
-      return NULL;
-    }
-
-    jclass dynamicInterface = javaFindClass(env, proxyData->interfaceName);
-    if(dynamicInterface == NULL) {
-      printf("Could not find interface %s\n", proxyData->interfaceName.c_str());
-      return NULL;
-    }
-    jclass classClazz = env->FindClass("java/lang/Class");
-    jobjectArray classArray = env->NewObjectArray(1, classClazz, NULL);
-    env->SetObjectArrayElement(classArray, 0, dynamicInterface);
-
-    jmethodID class_getClassLoader = env->GetMethodID(classClazz, "getClassLoader", "()Ljava/lang/ClassLoader;");
-    jobject classLoader = env->CallObjectMethod(dynamicInterface, class_getClassLoader);
-    assert(!env->ExceptionCheck());
-
-    if(classLoader == NULL) {
-      jclass objectClazz = env->FindClass("java/lang/Object");
-      jmethodID object_getClass = env->GetMethodID(objectClazz, "getClass", "()Ljava/lang/Class;");
-      jobject jobjClass = env->CallObjectMethod(jobj, object_getClass);
-      checkJavaException(env);
-      classLoader = env->CallObjectMethod(jobjClass, class_getClassLoader);
-      checkJavaException(env);
-    }
-
-    jclass proxyClass = env->FindClass("java/lang/reflect/Proxy");
-    jmethodID proxy_newProxyInstance = env->GetStaticMethodID(proxyClass, "newProxyInstance", "(Ljava/lang/ClassLoader;[Ljava/lang/Class;Ljava/lang/reflect/InvocationHandler;)Ljava/lang/Object;");
-    if(classLoader == NULL) {
-      printf("Could not get classloader for Proxy\n");
-      return NULL;
-    }
-    if(classArray == NULL) {
-      printf("Could not create class array for Proxy\n");
-      return NULL;
-    }
-    if(jobj == NULL) {
-      printf("Not a valid object to wrap\n");
-      return NULL;
-    }
-    jobj = env->CallStaticObjectMethod(proxyClass, proxy_newProxyInstance, classLoader, classArray, jobj);
-    checkJavaException(env);
-  }
-
-  return jobj;
+  return javaObject->getObject();
 }
 
 void checkJavaException(JNIEnv* env) {
@@ -548,6 +497,10 @@ v8::Handle<v8::Value> javaArrayToV8(Java* java, JNIEnv* env, jobjectArray objArr
 }
 
 v8::Handle<v8::Value> javaToV8(Java* java, JNIEnv* env, jobject obj) {
+  return javaToV8(java, env, obj, NULL);
+}
+
+v8::Handle<v8::Value> javaToV8(Java* java, JNIEnv* env, jobject obj, DynamicProxyData* dynamicProxyData) {
   if(obj == NULL) {
     return NanNull();
   }
@@ -629,6 +582,9 @@ v8::Handle<v8::Value> javaToV8(Java* java, JNIEnv* env, jobject obj) {
     case TYPE_STRING:
       return NanNew<v8::String>(javaObjectToString(env, obj).c_str());
     case TYPE_OBJECT:
+      if (dynamicProxyData != NULL) {
+        return JavaProxyObject::New(java, obj, dynamicProxyData);
+      }
       return JavaObject::New(java, obj);
     default:
       printf("javaToV8: unhandled type: 0x%03x\n", resultType);
@@ -778,4 +734,15 @@ std::string methodNotFoundToString(JNIEnv *env, jclass clazz, std::string method
   }
 
   return msg.str();
+}
+
+void unref(DynamicProxyData* dynamicProxyData) {
+  if(!dynamicProxyDataVerify(dynamicProxyData)) {
+    return;
+  }
+  NanDisposePersistent(dynamicProxyData->jsObject);
+  NanDisposePersistent(dynamicProxyData->functions);
+  dynamicProxyData->markerStart = 0;
+  dynamicProxyData->markerEnd = 0;
+  delete dynamicProxyData;
 }

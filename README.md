@@ -58,6 +58,32 @@ npm test
 
 _NOTE: You will need node-gyp installed using "npm install -g node-gyp"_
 
+### Java 1.8 support
+
+Manual compilation for Java 1.8 support requires additional steps:
+
+```bash
+./compile-java-code.sh
+./compile-java8-code.sh
+node-gyp configure build
+npm test
+npm test8
+```
+
+Java 1.8 language features can be used in Java classes only if a Java 1.8 JRE is available. The script compile-java8-code.sh is used only to compile java classes used in the 'test8' unit tests, but these classes are checked into the test8/ directory. Note that unit tests in the test8/ directory will pass (by design) if run against a Java 1.6 or 1.7 JRE, provided that a java.lang.UnsupportedClassVersionError is caught with the message 'Unsupported major.minor version 52.0' (the expected behavior when Java 1.8 language features are used in an older JRE).
+
+## Installation node-webkit
+
+```bash
+npm install -g nw-gyp
+npm install java
+cd node_modules/java
+nw-gyp configure --target=0.10.5
+nw-gyp build
+```
+
+_See testIntegration/webkit for a working example_
+
 ## Quick Examples
 
 ```javascript
@@ -196,7 +222,7 @@ __Example__
     var Test = java.import('Test');
     Test.someStaticMethodSync(5);
     console.log(Test.someStaticField);
-    
+
     var value1 = Test.NestedEnum.Value1;
 
     var test = new Test();
@@ -538,6 +564,12 @@ ShutdownHookHelper.setShutdownHookSync(java.newProxy('java.lang.Runnable', {
 # Object lifetime
 
 When you call a Java method through node-java, any arguments (V8/JavaScript objects) will be converted to Java objects  on the v8 main thread via a call to v8ToJava (found in utils.cpp). The JavaScript object is not held on to and can be garbage collected by v8. If this is an async call, the reference count on the Java objects will be incremented. The Java method will be invoked in a node.js async thread (see uv_queue_work). When the method returns, the resulting object will be returned to the main v8 thread and converted to JavaScript objects via a call to javaToV8 and the Java object's reference count will then be decremented to allow for garbage collection. The resulting v8 object will then be returned to the callers callback function.
+
+# Troubleshooting
+
+## Error: Cannot find module '../build/jvm_dll_path.json'
+
+Either postInstall.js didn't run or there was a problem detecting java. Try running postInstall.js manually.
 
 ## License
 

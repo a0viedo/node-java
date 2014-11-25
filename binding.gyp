@@ -1,19 +1,47 @@
 {
   'variables': {
     'arch%': 'amd64', # linux JVM architecture. See $(JAVA_HOME)/jre/lib/<@(arch)/server/
+    'uname_m': '',
     'conditions': [
       ['target_arch=="ia32"', {
         'arch%': 'i386'
       }],
+      ['OS!="win"', {
+        'uname_m': '<!(uname -m)'
+      }],
+      ['uname_m=="s390" or uname_m=="s390x"', {
+        'target_arch': 's390'
+      }],
+      ['uname_m=="ppc64" or uname_m=="ppc64le"', {
+        'target_arch': 'ppc64'
+      }],
       ['OS=="win"', {
         'javahome%': '<!(node findJavaHome.js)'
       }],
-      ['OS=="linux" or OS=="mac" or OS=="freebsd" or OS=="openbsd"', {
+      ['OS=="linux" or OS=="mac" or OS=="freebsd" or OS=="openbsd" or OS=="solaris"'  , {
         'javahome%': '<!(node findJavaHome.js)'
       }],
       ['OS=="mac"', {
       	'javaver%' : "<!(awk -F/ -v h=`node findJavaHome.js` 'BEGIN {n=split(h, a); print a[2]; exit}')"
-      }]
+      }],
+      ['OS=="linux" and target_arch=="ia32"', {
+        'javalibdir%': "<!(h=\"`node findJavaHome.js`\" sh -c 'if [ -d \"$h/jre/lib/i386/classic\" ]; then echo $h/jre/lib/i386/classic; else echo $h/jre/lib/i386/server; fi')"
+      }],
+      ['OS=="linux" and target_arch=="x64"', {
+        'javalibdir%': "<!(h=\"`node findJavaHome.js`\" sh -c 'if [ -d \"$h/jre/lib/amd64/classic\" ]; then echo $h/jre/lib/amd64/classic; else echo $h/jre/lib/amd64/server; fi')"
+      }],
+      ['OS=="linux" and (target_arch=="s390x" or target_arch=="s390")', {
+        'javalibdir%': "<!(h=\"`node findJavaHome.js`\" sh -c 'if [ -d \"$h/jre/lib/s390x/classic\" ]; then echo $h/jre/lib/s390x/classic; else echo $h/jre/lib/s390/classic; fi')"
+      }],
+      ['OS=="linux" and (target_arch=="ppc64" or target_arch=="ppc")', {
+        'javalibdir%': "<!(h=\"`node findJavaHome.js`\" sh -c 'if [ -d \"$h/jre/lib/ppc64/classic\" ]; then echo $h/jre/lib/ppc64/classic; fi')"
+      }],
+      ['OS=="solaris" and target_arch=="ia32"', {
+        'javalibdir%': "<!(h=\"`node findJavaHome.js`\" sh -c 'if [ -d \"$h/jre/lib/i386/classic\" ]; then echo $h/jre/lib/i386/classic; else echo $h/jre/lib/i386/server; fi')"
+      }],
+      ['OS=="solaris" and target_arch=="x64"', {
+        'javalibdir%': "<!(h=\"`node findJavaHome.js`\" sh -c 'if [ -d \"$h/jre/lib/amd64/classic\" ]; then echo $h/jre/lib/amd64/classic; else echo $h/jre/lib/amd64/server; fi')"
+      }],
     ]
   },
   'targets': [
@@ -49,7 +77,19 @@
               '<(javahome)/include/linux',
             ],
             'libraries': [
-              '-L<(javahome)/jre/lib/<(arch)/server/',
+              '-L<(javalibdir)',
+              '-Wl,-rpath,<(javalibdir)',
+              '-ljvm'
+            ]
+          }
+        ],
+        ['OS=="solaris"',
+          {
+            'include_dirs': [
+              '<(javahome)/include/solaris',
+            ],
+            'libraries': [
+               '-L<(javahome)/jre/lib/<(arch)/server/',
               '-Wl,-rpath,<(javahome)/jre/lib/<(arch)/server/',
               '-ljvm'
             ]
