@@ -19,6 +19,10 @@ require('find-java-home')({ allowJre: true  }, function(err, home){
 
     binary = dll || dylib || so;
 
+    if (!fs.existsSync(path.resolve(__dirname, './build/')))  {
+        fs.mkdirSync(path.resolve(__dirname, './build/'));
+    }
+
     fs.writeFileSync(
       path.resolve(__dirname, './build/jvm_dll_path.json'),
       binary
