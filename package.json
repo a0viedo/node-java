@@ -36,7 +36,6 @@
   },
   "scripts": {
     "test": "nodeunit test test8",
-    "install": "node install.js || node-gyp rebuild",
     "postinstall": "node postInstall.js"
   },
   "main": "./index.js"
